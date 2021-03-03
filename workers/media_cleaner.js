@@ -6,6 +6,9 @@ const limit = 1000;
 const sort = "-_id";
 let count = 0;
 
+const mediaCleanerWorker = (manifestation, config) => async () =>
+  console.log(`mediaCleaner worker proceeded ${manifestation.name}`);
+
 const throttledLog = _.throttle(() => {
   console.log(`Processed ${count}`);
 }, 180000);
@@ -52,4 +55,4 @@ const cleanPostsMedia = async (currentPage) => {
   }
 };
 
-module.exports = { cleanPostsMedia };
+module.exports = { mediaCleanerWorker };

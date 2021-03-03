@@ -2,23 +2,23 @@ require("dotenv").config();
 const config = require("config");
 const MvModels = require("mv-models");
 
-const { SchedulerConfig } = require("./CRON");
+const { SchedulerConfig } = require("./scheduler");
+const { LoggerConfig } = require("./common/logger");
+const { getDbUri } = require("./helpers/db");
+const { normalizeAndLogError } = require("./helpers/errors");
 
-const dbHost = config.get("db.host");
-const dbPort = config.get("db.port");
-const dbName = config.get("db.name");
-const dbUsername = config.get("db.username");
-const dbPassword = config.get("db.password");
-const dbAuth = config.get("db.auth");
+const dbUri = getDbUri(config);
 
-const dbUri = `mongodb://${
-  dbUsername ? `${dbUsername}:${dbPassword}@` : ""
-}${dbHost}:${dbPort}/${dbName}${dbAuth ? `?authSource=${dbAuth}` : ""}`;
+(async () => {
+  try {
+    LoggerConfig.init();
+    await MvModels.init(dbUri);
+    const results = await SchedulerConfig.init();
 
-MvModels.init(dbUri)
-  .then(() => {
-    SchedulerConfig.init();
-  })
-  .catch((err) => {
-    console.error(err);
-  });
+    process.env.NODE_ENV !== "test" &&
+      LoggerConfig.getChild("server.js").info(`Cron started. Results ${results}`);
+  } catch (err) {
+    normalizeAndLogError("index", err);
+    process.exit(1);
+  }
+})();

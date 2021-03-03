@@ -2,7 +2,7 @@
 // const axios = require("axios");
 const bigInt = require("big-integer");
 
-const { PostDAO, PostUserDAO, DenyListDAO, PostCrawlStatusDAO } = require("mv-models");
+const { PostDAO, DenyListDAO } = require("mv-models");
 
 // const { SeaweedConfig } = require("../config/seaweed.config");
 
@@ -10,6 +10,17 @@ const maxPosts = process.env.INSTAGRAM_CRAWLER_MAX_POSTS || 1400;
 
 let postCount = 0;
 let insertedCrawlStatus = false;
+
+function timeout(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const instagramWorker = (manifestation, config) => async () => {
+  await timeout(8500);
+  console.log(`IG worker proceeded ${manifestation.name}`);
+  return true;
+};
+
 // let reqHeaders;
 
 // const login = async () => {
@@ -281,4 +292,4 @@ const getPosts = async (sinceId, maxId, hashtag, page) => {
   }
 };
 
-module.exports = { getPosts, resetInstagramCron };
+module.exports = { instagramWorker };
