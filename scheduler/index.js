@@ -16,7 +16,7 @@ const { mediaCleanerWorker } = require("../workers/media_cleaner");
 
 const q = queue(async (task) => {
   try {
-    return await task();
+    await task();
   } catch (err) {
     normalizeAndLogError("scheduler.js queue", err);
   }

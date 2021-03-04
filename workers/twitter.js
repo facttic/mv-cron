@@ -3,12 +3,13 @@ const Twitter = require("twitter");
 const pify = require("pify");
 const { PostDAO, DenyListDAO } = require("mv-models");
 
-let maxTweets;
-let maxtweetsPerQuery;
+const { LoggerConfig } = require("../common/logger");
 
 const twitterWorker = (manifestation, config) => async () => {
+  twitterWorker.name = `TW worker for ${manifestation.name}`;
   const hashtags = manifestation.getAllHashtags();
   const lastTweetCrawlStatus = manifestation.getLastCrawlStatus("twitter");
+  const { api } = config;
 
   let since_id = null;
 
@@ -17,17 +18,17 @@ const twitterWorker = (manifestation, config) => async () => {
   }
   if (hashtags && hashtags.list && hashtags.list.length) {
     const client = new Twitter({
-      consumer_key: config.api.consumerKey,
-      consumer_secret: config.api.consumerSecret,
-      access_token_key: config.api.accessTokenKey,
-      access_token_secret: config.api.accessTokenSecret,
+      consumer_key: api.consumerKey,
+      consumer_secret: api.consumerSecret,
+      access_token_key: api.accessTokenKey,
+      access_token_secret: api.accessTokenSecret,
     });
-    maxTweets = config.maxTweets;
-    maxtweetsPerQuery = config.maxTweetsPerQuery;
 
     const hashtag_names = hashtags.list.map((h) => h.name);
-    resetTwitterCron();
-    return await getTweets(manifestation, client)(since_id, null, hashtag_names);
+    LoggerConfig.getChild(`${manifestation.name} twitter`).info(
+      `[${manifestation._id.toString()}][TW] Start fetching for ${hashtag_names.join(",")}`,
+    );
+    return await getTweets(manifestation, client)(since_id, null, hashtag_names, config, 0);
   }
 };
 
@@ -35,15 +36,8 @@ const splitString = (value, index) => {
   return [value.substring(0, index), value.substring(index)];
 };
 
-let tweetCount = 0;
-
-const resetTwitterCron = () => {
-  tweetCount = 0;
-};
-
 const options = {
   tweet_mode: "extended",
-  count: maxtweetsPerQuery,
   include_entities: true,
 };
 
@@ -56,6 +50,8 @@ const processStatuses = async (statuses, manifestation_id) => {
         post_created_at: parseInt(Date.parse(tweet.created_at) / 1000),
         post_id_str: tweet.id_str,
         full_text: tweet.full_text,
+        // hashtags and media are filled
+        // afterwards
         hashtags: [],
         media: [],
         user: {
@@ -90,13 +86,22 @@ const processStatuses = async (statuses, manifestation_id) => {
       }
       myUsefulTweet.source = "twitter";
       myArrayOfTweets.push(myUsefulTweet);
-      tweetCount++;
     }
   }
   return myArrayOfTweets;
 };
 
-const getTweets = (manifestation, client) => async (sinceId, maxId, hashtags) => {
+const getTweets = (manifestation, client) => async (
+  sinceId,
+  maxId,
+  hashtags,
+  config,
+  tweetCount,
+) => {
+  let currentCount = tweetCount;
+  const logger = LoggerConfig.getChild(`${manifestation.name} twitter`);
+  const { maxTweetsPerQuery, maxTweets } = config;
+
   if (sinceId) {
     options.since_id = sinceId;
     delete options.max_id;
@@ -107,21 +112,29 @@ const getTweets = (manifestation, client) => async (sinceId, maxId, hashtags) =>
     options.max_id = `${start}${endInt}`;
   }
 
+  options.count = maxTweetsPerQuery;
   options.q = `${hashtags.join(" OR ")} -filter:retweets -filter:replies filter:images`;
 
   const asyncGet = pify(client.get, { multiArgs: true }).bind(client);
   const [tweets, _response] = await asyncGet("search/tweets", options);
 
   if (tweets.statuses.length === 0) {
-    return 0;
+    logger.info(
+      `[${manifestation._id.toString()}][TW] No (more) results found. Fetched ${currentCount}`,
+    );
+    return currentCount && (await manifestation.updatePeopleCount());
   }
-  if (tweetCount >= maxTweets) {
-    return tweetCount;
+  if (currentCount >= maxTweets) {
+    logger.info(
+      `[${manifestation._id.toString()}][TW] Hit max tweets soft limit: ${currentCount} >= ${maxTweets}`,
+    );
+    return currentCount && (await manifestation.updatePeopleCount());
   }
 
   const { statuses } = tweets;
   const myArrayOfTweets = await processStatuses(statuses, manifestation._id);
   await PostDAO.insertMany(myArrayOfTweets);
+  currentCount += myArrayOfTweets.length;
 
   const { id_str: id_str_bottom } = statuses[statuses.length - 1];
   const { id_str: id_str_top, created_at: created_at_top } = statuses[0];
@@ -133,60 +146,18 @@ const getTweets = (manifestation, client) => async (sinceId, maxId, hashtags) =>
   });
 
   if (!sinceId) {
-    return await getTweets(manifestation, client)(sinceId, id_str_bottom, hashtags);
+    logger.info(`[${manifestation._id.toString()}][TW] Looping from ${id_str_bottom}`);
+    return await getTweets(manifestation, client)(
+      sinceId,
+      id_str_bottom,
+      hashtags,
+      config,
+      currentCount,
+    );
   }
 
-  await manifestation.updatePeopleCount();
-  return tweetCount;
-  // client.get("search/tweets", options, async function (error, tweets, response) {
-  //   if (error) {
-  //     console.log(
-  //       `Processed ${tweetCount}. And got the error below. With the following options: ${JSON.stringify(
-  //         options,
-  //       )}`,
-  //     );
-  //     console.error(error);
-  //     return;
-  //   }
-  //   if (tweets.statuses.length === 0) {
-  //     console.log("We're still fetching tweets! But there was nothing new.");
-  //     return;
-  //   }
-  //   if (tweetCount >= maxTweets) {
-  //     console.log(`Hit maxTweets soft limit. Totals ${tweetCount}.`);
-  //     return;
-  //   }
-
-  //   const { statuses } = tweets;
-  //   const myArrayOfTweets = await processStatuses(statuses);
-
-  //   PostDAO.insertMany(myArrayOfTweets)
-  //     .then(async (tweetResults) => {
-  //       const { id_str: id_str_bottom } = statuses[statuses.length - 1];
-  //       const { id_str: id_str_top, created_at: created_at_top } = statuses[0];
-
-  //       await PostCrawlStatusDAO.createNew({
-  //         post_id_str: id_str_top,
-  //         post_created_at: created_at_top,
-  //         source: "twitter",
-  //       });
-  //       let users;
-  //       if (!sinceId) {
-  //         return getTweets(sinceId, id_str_bottom, hashtags);
-  //       } else {
-  //         users = await PostUserDAO.saveCount();
-  //       }
-  //       console.log(
-  //         `We're still fetching tweets! Inserted ${tweetResults.insertedCount}. Total users: ${
-  //           users && users.count
-  //         }`,
-  //       );
-  //     })
-  //     .catch((err) => {
-  //       console.log("Something failed at saving many. And got the error below");
-  //       console.error(err);
-  //     });
-  // });
+  logger.info(`[${manifestation._id.toString()}][TW] Finished job. Fetched ${currentCount}`);
+  return await manifestation.updatePeopleCount();
 };
 
 module.exports = { twitterWorker };

@@ -13,10 +13,9 @@ const dbUri = getDbUri(config);
   try {
     LoggerConfig.init();
     await MvModels.init(dbUri);
-    const results = await SchedulerConfig.init();
+    await SchedulerConfig.init();
 
-    process.env.NODE_ENV !== "test" &&
-      LoggerConfig.getChild("server.js").info(`Cron started. Results ${results}`);
+    process.env.NODE_ENV !== "test" && LoggerConfig.getChild("server.js").info("Cron started");
   } catch (err) {
     normalizeAndLogError("index", err);
     process.exit(1);
