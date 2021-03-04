@@ -6,8 +6,7 @@ const { PostDAO, DenyListDAO } = require("mv-models");
 const { LoggerConfig } = require("../common/logger");
 
 const twitterWorker = (manifestation, config) => async () => {
-  twitterWorker.name = `TW worker for ${manifestation.name}`;
-  const hashtags = manifestation.getAllHashtags();
+  const hashtags = manifestation.getHashtagsBySource("twitter");
   const lastTweetCrawlStatus = manifestation.getLastCrawlStatus("twitter");
   const { api } = config;
 
@@ -26,7 +25,7 @@ const twitterWorker = (manifestation, config) => async () => {
 
     const hashtag_names = hashtags.list.map((h) => h.name);
     LoggerConfig.getChild(`${manifestation.name} twitter`).info(
-      `[${manifestation._id.toString()}][TW] Start fetching for ${hashtag_names.join(",")}`,
+      `[${manifestation._id.toString()}][TW] Start fetching for ${hashtag_names.join(", ")}`,
     );
     return await getTweets(manifestation, client)(since_id, null, hashtag_names, config, 0);
   }
@@ -45,6 +44,7 @@ const processStatuses = async (statuses, manifestation_id) => {
   const myArrayOfTweets = [];
   for (const tweet of statuses) {
     const denyListed = await DenyListDAO.getByUserIdStr(tweet.user.id_str);
+
     if (tweet.entities && tweet.entities.media && tweet.entities.media.length > 0 && !denyListed) {
       const myUsefulTweet = {
         post_created_at: parseInt(Date.parse(tweet.created_at) / 1000),
@@ -84,6 +84,7 @@ const processStatuses = async (statuses, manifestation_id) => {
           myUsefulTweet.hashtags.push(h.text);
         });
       }
+
       myUsefulTweet.source = "twitter";
       myArrayOfTweets.push(myUsefulTweet);
     }
