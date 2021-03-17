@@ -1,6 +1,6 @@
 // /* eslint camelcase:0 */
 const schedule = require("node-schedule");
-const { ManifestationDAO } = require("mv-models");
+const { ManifestationDAO, ManifestationEmmiter } = require("mv-models");
 const queue = require("async/queue");
 
 const { normalizeAndLogError } = require("../helpers/errors");
@@ -21,7 +21,9 @@ const q = queue(async (task) => {
 // 2. Schedule jobs for each active worker
 const init = async () => {
   const { list: manifestations } = await ManifestationDAO.getAll({});
-
+  ManifestationEmmiter.on("update", () => {
+    console.log("A");
+  });
   manifestations.forEach((manifestation) => {
     const { twitter, instagram, mediaCleaner } = manifestation.config;
     const { active } = manifestation;
