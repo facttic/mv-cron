@@ -13,40 +13,47 @@ const instagramWorker = (manifestation, config) => async () => {
     const browser = await puppeteer.launch();
     const page = await browser.newPage();
 
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
-    );
-
-    await page.goto("https://www.instagram.com/accounts/login/", {
-      waitUntil: "networkidle2",
-    });
-
-    await page.waitForSelector('input[name="username"]');
-    await page.type('input[name="username"]', username);
-    await page.type('input[name="password"]', password);
-    await page.click('button[type="submit"]');
-    // Add a wait for some selector on the home page to load to ensure the next step works correctly
-    await page.waitForSelector(`img[alt="${username}'s profile picture"]`);
-
-    for (const hashtag of hashtags.list) {
-      let since_id = null;
-      const { name } = hashtag;
-      const lastPostCrawlStatus = await manifestation.getLastCrawlStatusByHashtag(
-        "instagram",
-        hashtag,
+    try {
+      await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
       );
 
-      if (lastPostCrawlStatus) {
-        since_id = lastPostCrawlStatus.post_id_str;
+      await page.goto("https://www.instagram.com/accounts/login/", {
+        waitUntil: "networkidle2",
+      });
+
+      await page.waitForSelector('input[name="username"]');
+      await page.type('input[name="username"]', username);
+      await page.type('input[name="password"]', password);
+      await page.click('button[type="submit"]');
+      // Add a wait for some selector on the home page to load to ensure the next step works correctly
+      await page.waitForSelector(`img[alt="${username}'s profile picture"]`);
+
+      for (const hashtag of hashtags.list) {
+        let since_id = null;
+        const { name } = hashtag;
+        const lastPostCrawlStatus = await manifestation.getLastCrawlStatusByHashtag(
+          "instagram",
+          hashtag,
+        );
+
+        if (lastPostCrawlStatus) {
+          since_id = lastPostCrawlStatus.post_id_str;
+        }
+
+        LoggerConfig.getChild(`${manifestation.name} instagram`).info(
+          `[${manifestation._id.toString()}][IG] Start fetching for ${name}`,
+        );
+        await getPosts(manifestation, page)(since_id, null, name, config, 0, false);
       }
-
+    } catch (err) {
       LoggerConfig.getChild(`${manifestation.name} instagram`).info(
-        `[${manifestation._id.toString()}][IG] Start fetching for ${name}`,
+        `[${manifestation._id.toString()}][IG] Something failed`,
       );
-      await getPosts(manifestation, page)(since_id, null, name, config, 0, false);
+      throw err;
+    } finally {
+      await browser.close();
     }
-
-    return await browser.close();
   }
 };
 
@@ -208,6 +215,7 @@ const getPosts = (manifestation, page) => async (
     }
   }
 
+  myArrayOfPosts.length = 0;
   logger.info(`[${manifestation._id.toString()}][IG] Finished job. Fetched ${currentCount}`);
   return currentCount && (await manifestation.updatePeopleCount());
 };

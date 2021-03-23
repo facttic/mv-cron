@@ -1,6 +1,6 @@
 // /* eslint camelcase:0 */
 const schedule = require("node-schedule");
-const { ManifestationDAO, ManifestationEmmiter } = require("mv-models");
+const { ManifestationDAO } = require("mv-models");
 const queue = require("async/queue");
 
 const { normalizeAndLogError } = require("../helpers/errors");
@@ -10,7 +10,7 @@ const { mediaCleanerWorker } = require("../workers/media_cleaner");
 
 const q = queue(async (task) => {
   try {
-    await task();
+    return await task();
   } catch (err) {
     normalizeAndLogError("scheduler.js queue", err);
   }
@@ -21,9 +21,7 @@ const q = queue(async (task) => {
 // 2. Schedule jobs for each active worker
 const init = async () => {
   const { list: manifestations } = await ManifestationDAO.getAll({});
-  ManifestationEmmiter.on("update", () => {
-    console.log("A");
-  });
+
   manifestations.forEach((manifestation) => {
     const { twitter, instagram, mediaCleaner } = manifestation.config;
     const { active } = manifestation;
@@ -40,12 +38,10 @@ const init = async () => {
 
 // Schedule jobs and push them workers to the queue
 const scheduleManJob = (manifestation, config, worker) => {
-  const job = schedule.scheduleJob(manifestation.name, config.scheduleSchema, async () => {
+  schedule.scheduleJob(manifestation.name, config.scheduleSchema, () => {
     // TODO: is this closure leaking?
     // if this job is waiting, skip <- review
-    if (job.pendingInvocations().length <= 1) {
-      q.push(worker(manifestation, config));
-    }
+    q.push(worker(manifestation, config));
   });
 };
 
