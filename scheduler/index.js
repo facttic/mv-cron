@@ -2,6 +2,7 @@
 const schedule = require("node-schedule");
 const { ManifestationDAO } = require("mv-models");
 const queue = require("async/queue");
+const redis = require("redis");
 
 const { normalizeAndLogError } = require("../helpers/errors");
 const { twitterWorker } = require("../workers/twitter");
@@ -20,8 +21,17 @@ const q = queue(async (task) => {
 // 1. Evaluate if they're active
 // 2. Schedule jobs for each active worker
 const init = async () => {
-  const { list: manifestations } = await ManifestationDAO.getAll({});
+  try {
+    const subscriber = redis.createClient();
+    subscriber.subscribe("man-updates");
+    subscriber.on("message", function (channel, message) {
+      console.log("Message: " + message + " on channel: " + channel + " has arrived!");
+    });
+  } catch (err) {
+    normalizeAndLogError("scheduler.js redis hook", err);
+  }
 
+  const { list: manifestations } = await ManifestationDAO.getAll({});
   manifestations.forEach((manifestation) => {
     const { twitter, instagram, mediaCleaner } = manifestation.config;
     const { active } = manifestation;
