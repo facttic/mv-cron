@@ -48,23 +48,38 @@ const hookUpdatesListener = () => {
   } catch (err) {
     normalizeAndLogError("scheduler.js redis sub", err);
   }
-}
+};
 
 // 0. Check if manifestations is active
 // 1. Remove/cancel jobs from map if they exist
 // 2. Schedule jobs for the active crons
 const maybeSchedule = (manifestation) => {
   const { active } = manifestation;
-  cancelExistingSchedules(manifestation.id.toString());
+  const key = manifestation.id.toString();
+  cancelExistingSchedules(key);
 
   if (active) {
     const { twitter, instagram, mediaCleaner } = manifestation.config;
 
-    twitter.active && scheduleManJob(manifestation, twitter, twitterWorker);
-    instagram.active && scheduleManJob(manifestation, instagram, instagramWorker);
-    mediaCleaner.active && scheduleManJob(manifestation, mediaCleaner, mediaCleanerWorker);
+    twitter.active && scheduleManJob(manifestation, twitter, "TW", twitterWorker);
+    instagram.active && scheduleManJob(manifestation, instagram, "IG", instagramWorker);
+    mediaCleaner.active && scheduleManJob(manifestation, mediaCleaner, "MC", mediaCleanerWorker);
   }
-}
+
+  const jobsCount = countJobs();
+  logger.info(`[${key}][Totals] ${jobsCount} job${jobsCount === 1 ? "" : "s"} running for ${jobs.size} manifestation${jobs.size === 1 ? "" : "s"}`);
+};
+
+const countJobs = () => {
+  let jobsCount = 0;
+
+  if (jobs.size > 0) {
+    jobs.forEach(job => {
+      jobsCount += job.size;
+    })
+  }
+  return jobsCount;
+};
 
 const cancelExistingSchedules = (key) => {
   const jobsSet = jobs.get(key);
@@ -72,15 +87,15 @@ const cancelExistingSchedules = (key) => {
 
   if (jobsSet) {
     for (let job of jobsSet) {
-      logger.info(`[${key}][Cancel] Scheduler named ${job.name}. Would have run at ${job.nextInvocation()}`);
+      logger.info(`[${key}][Cancel]${job.name} scheduler was successfully cancelled. Run time ${job.nextInvocation()}`);
       job.cancel();
     }
   }
-}
+};
 
 // 0. Schedule jobs and push them workers to the queue
-const scheduleManJob = (manifestation, config, workerFactory) => {
-  const job = schedule.scheduleJob(manifestation.name, config.scheduleSchema, () => {
+const scheduleManJob = (manifestation, config, type, workerFactory) => {
+  const job = schedule.scheduleJob(`[${type}] ${manifestation.name}`, config.scheduleSchema, () => {
     // each workerFactory returns the async function
     // to be executed in the queue
     q.push(workerFactory(manifestation, config));
@@ -94,8 +109,7 @@ const scheduleManJob = (manifestation, config, workerFactory) => {
 
   jobs.set(key, jobsSet ? jobsSet.add(job) : new Set([job]));
 
-  logger.info(`[${key}][Create] Scheduler named ${job.name} set to run at ${job.nextInvocation()}`);
-  logger.info(`[${key}][Totals] Jobs running for ${jobs.size} manifestation${jobs.size === 1 ? "" : "s"}`);
+  logger.info(`[${key}][Create]${job.name} scheduler was successfully created. Schema ${config.scheduleSchema}. Run time ${job.nextInvocation()}`);
 };
 
 module.exports = {
