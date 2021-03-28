@@ -9,6 +9,9 @@ const { twitterWorker } = require("../workers/twitter");
 const { instagramWorker } = require("../workers/instagram");
 const { mediaCleanerWorker } = require("../workers/media_cleaner");
 
+const { LoggerConfig } = require("../common/logger");
+let logger;
+
 const q = queue(async (task) => {
   try {
     return await task();
@@ -17,42 +20,82 @@ const q = queue(async (task) => {
   }
 }, 2);
 
-// 0. Get manifestations
-// 1. Evaluate if they're active
-// 2. Schedule jobs for each active worker
+// key: manifestation ID
+// val: Set() of jobs scheduled
+const jobs = new Map();
+
+// 0. Hook updates listener
+// 1. Get manifestations
+// 2. Maybe Schedule jobs for manifestations
 const init = async () => {
-  try {
-    const subscriber = redis.createClient();
-    subscriber.subscribe("man-updates");
-    subscriber.on("message", function (channel, message) {
-      console.log("Message: " + message + " on channel: " + channel + " has arrived!");
-    });
-  } catch (err) {
-    normalizeAndLogError("scheduler.js redis hook", err);
-  }
+  logger = LoggerConfig.getChild("scheduler.js");
+  hookUpdatesListener();
 
   const { list: manifestations } = await ManifestationDAO.getAll({});
-  manifestations.forEach((manifestation) => {
-    const { twitter, instagram, mediaCleaner } = manifestation.config;
-    const { active } = manifestation;
-
-    // TODO: hook manifestation changes or creations
-    // to remove, add or delete scheduled manJobs
-    if (active) {
-      twitter.active && scheduleManJob(manifestation, twitter, twitterWorker);
-      instagram.active && scheduleManJob(manifestation, instagram, instagramWorker);
-      mediaCleaner.active && scheduleManJob(manifestation, mediaCleaner, mediaCleanerWorker);
-    }
-  });
+  manifestations.forEach((manifestation) => maybeSchedule(manifestation));
 };
 
-// Schedule jobs and push them workers to the queue
-const scheduleManJob = (manifestation, config, worker) => {
-  schedule.scheduleJob(manifestation.name, config.scheduleSchema, () => {
-    // TODO: is this closure leaking?
-    // if this job is waiting, skip <- review
-    q.push(worker(manifestation, config));
+const hookUpdatesListener = () => {
+  try {
+    const subscriber = redis.createClient();
+    subscriber.subscribe("maninfestation-updates");
+
+    subscriber.on("message", async (_channel, updatedManifestationId) => {
+      logger.info(`[${updatedManifestationId}][Update] Manifestation was updated`);
+      const manifestation = await ManifestationDAO.getById(updatedManifestationId);
+      manifestation && maybeSchedule(manifestation);
+    });
+  } catch (err) {
+    normalizeAndLogError("scheduler.js redis sub", err);
+  }
+}
+
+// 0. Check if manifestations is active
+// 1. Remove/cancel jobs from map if they exist
+// 2. Schedule jobs for the active crons
+const maybeSchedule = (manifestation) => {
+  const { active } = manifestation;
+  cancelExistingSchedules(manifestation.id.toString());
+
+  if (active) {
+    const { twitter, instagram, mediaCleaner } = manifestation.config;
+
+    twitter.active && scheduleManJob(manifestation, twitter, twitterWorker);
+    instagram.active && scheduleManJob(manifestation, instagram, instagramWorker);
+    mediaCleaner.active && scheduleManJob(manifestation, mediaCleaner, mediaCleanerWorker);
+  }
+}
+
+const cancelExistingSchedules = (key) => {
+  const jobsSet = jobs.get(key);
+  jobs.delete(key);
+
+  if (jobsSet) {
+    for (let job of jobsSet) {
+      logger.info(`[${key}][Cancel] Scheduler named ${job.name}. Would have run at ${job.nextInvocation()}`);
+      job.cancel();
+    }
+  }
+}
+
+// 0. Schedule jobs and push them workers to the queue
+const scheduleManJob = (manifestation, config, workerFactory) => {
+  const job = schedule.scheduleJob(manifestation.name, config.scheduleSchema, () => {
+    // each workerFactory returns the async function
+    // to be executed in the queue
+    q.push(workerFactory(manifestation, config));
   });
+
+  // if val exists a job was already sched
+  // for the manifestation. Add it to set
+  // Map.get() returns the existing Set or undefined
+  const key = manifestation.id.toString();
+  const jobsSet = jobs.get(key);
+
+  jobs.set(key, jobsSet ? jobsSet.add(job) : new Set([job]));
+
+  logger.info(`[${key}][Create] Scheduler named ${job.name} set to run at ${job.nextInvocation()}`);
+  logger.info(`[${key}][Totals] Jobs running for ${jobs.size} manifestation${jobs.size === 1 ? "" : "s"}`);
 };
 
 module.exports = {
