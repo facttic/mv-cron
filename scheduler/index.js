@@ -38,8 +38,8 @@ const init = async () => {
 
 const hookUpdatesListener = () => {
   try {
-    const port = config.get("redis.port") | 6379;
-    const host = config.get("redis.host") | "redis";
+    const port = config.get("redis.port") || 6379;
+    const host = config.get("redis.host") || "redis";
     const subscriber = redis.createClient(port, host);
     subscriber.subscribe("maninfestation-updates");
 
