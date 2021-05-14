@@ -3,6 +3,7 @@ const schedule = require("node-schedule");
 const { ManifestationDAO } = require("mv-models");
 const queue = require("async/queue");
 const redis = require("redis");
+const config = require("config");
 
 const { normalizeAndLogError } = require("../helpers/errors");
 const { twitterWorker } = require("../workers/twitter");
@@ -37,7 +38,9 @@ const init = async () => {
 
 const hookUpdatesListener = () => {
   try {
-    const subscriber = redis.createClient();
+    const port = config.get("redis.port") | 6379;
+    const host = config.get("redis.host") | "redis";
+    const subscriber = redis.createClient(port, host);
     subscriber.subscribe("maninfestation-updates");
 
     subscriber.on("message", async (_channel, updatedManifestationId) => {
